@@ -461,7 +461,7 @@ func finalSigmaBody(c *context) bool {
 	// We need to do one more iteration after maxIgnorable, as a cased
 	// letter is not an ignorable and may modify the result.
 	wasMid := false
-	for i := 0; i < maxIgnorable+1; i++ {
+	for { // i := 0; i < maxIgnorable+1; i++ {
 		if !c.next() {
 			return false
 		}

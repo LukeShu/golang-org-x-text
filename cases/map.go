@@ -70,7 +70,6 @@ var (
 	}
 
 	undUpper            transform.SpanningTransformer = &undUpperCaser{}
-	undLower            transform.SpanningTransformer = &undLowerCaser{}
 	undLowerIgnoreSigma transform.SpanningTransformer = &undLowerIgnoreSigmaCaser{}
 
 	lowerFunc = []mapFunc{
@@ -115,7 +114,7 @@ func makeLower(t language.Tag, o options) transform.SpanningTransformer {
 		if o.ignoreFinalSigma {
 			return undLowerIgnoreSigma
 		}
-		return undLower
+		return &undLowerCaser{}
 	}
 	if o.ignoreFinalSigma {
 		return &simpleCaser{f: f, span: isLower}
@@ -229,18 +228,21 @@ func (t *simpleCaser) Span(src []byte, atEOF bool) (n int, err error) {
 // mapping for the root locale (und) ignoring final sigma handling. This casing
 // algorithm is used in some performance-critical packages like secure/precis
 // and x/net/http/idna, which warrants its special-casing.
-type undLowerCaser struct{ transform.NopResetter }
+type undLowerCaser struct {
+	context
+}
 
-func (t undLowerCaser) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int, err error) {
-	c := context{dst: dst, src: src, atEOF: atEOF}
+func (t *undLowerCaser) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int, err error) {
+	t.context = context{dst: dst, src: src, atEOF: atEOF, isMidWord: t.isMidWord}
+	c := &t.context
 
-	for isInterWord := true; c.next(); {
-		if isInterWord {
+	for c.next() {
+		if !c.isMidWord {
 			if c.info.isCased() {
-				if !lower(&c) {
+				if !lower(c) {
 					break
 				}
-				isInterWord = false
+				c.isMidWord = true
 			} else if !c.copy() {
 				break
 			}
@@ -249,13 +251,15 @@ func (t undLowerCaser) Transform(dst, src []byte, atEOF bool) (nDst, nSrc int, e
 				if !c.copy() {
 					break
 				}
-				isInterWord = true
+				c.isMidWord = false
 			} else if !c.hasPrefix("Σ") {
-				if !lower(&c) {
+				if !lower(c) {
 					break
 				}
-			} else if !finalSigmaBody(&c) {
-				break
+			} else {
+				if !finalSigmaBody(c) {
+					break
+				}
 			}
 		}
 		c.checkpoint()
@@ -460,7 +464,6 @@ func finalSigmaBody(c *context) bool {
 
 	// We need to do one more iteration after maxIgnorable, as a cased
 	// letter is not an ignorable and may modify the result.
-	wasMid := false
 	for { // i := 0; i < maxIgnorable+1; i++ {
 		if !c.next() {
 			return false
@@ -481,11 +484,6 @@ func finalSigmaBody(c *context) bool {
 		}
 		// A case ignorable may also introduce a word break, so we may need
 		// to continue searching even after detecting a break.
-		isMid := c.info.isMid()
-		if (wasMid && isMid) || c.info.isBreak() {
-			c.isMidWord = false
-		}
-		wasMid = isMid
 		c.copy()
 	}
 	return true
